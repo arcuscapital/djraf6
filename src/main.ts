@@ -367,7 +367,7 @@ function drawOver() {
   recOverBtn.classList.toggle("on", on);
   recOverBtn.textContent = on ? "🎤 Over the next song: ON" : "🎤 Over the next song: OFF";
   show(recOverSong, on);
-  recOverSong.textContent = t ? `You're talking over: ${t.name} – ${t.artist}` : "";
+  recOverSong.textContent = t ? `${t.name} – ${t.artist}` : "";
   show(recListenBtn, on);
   if (on) { setRecordMusic(false); recMusicBtn.disabled = true; }
   else if (!recorder.recording) recMusicBtn.disabled = false;
