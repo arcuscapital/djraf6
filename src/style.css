@@ -1242,5 +1242,6 @@ header h1 {
 #scene-record.medal-bronze .rec-ribbon { fill: #27AE60; }
 
 /* ===== v7: record over the next song ===== */
-.over-song { color: #1e3a5f; font-weight: 700; margin: -4px 0 10px; text-align: center; }
+.over-song { color: #1e3a5f; font-weight: 700; margin: -4px 0 10px; text-align: center; cursor: pointer; background: #eef6fd; border-radius: 12px; padding: 10px 12px; }
+.over-song:active { transform: scale(0.98); }
 

@@ -367,7 +367,7 @@ function drawOver() {
   recOverBtn.classList.toggle("on", on);
   recOverBtn.textContent = on ? "🎤 Over the next song: ON" : "🎤 Over the next song: OFF";
   show(recOverSong, on);
-  recOverSong.textContent = t ? `${t.name} – ${t.artist}` : "";
+  recOverSong.textContent = t ? `🔊 ${t.name} – ${t.artist}` : "";
   show(recListenBtn, on);
   if (on) { setRecordMusic(false); recMusicBtn.disabled = true; }
   else if (!recorder.recording) recMusicBtn.disabled = false;
@@ -385,6 +385,18 @@ recOverBtn.addEventListener("click", () => {
   if (!recOverBlockId) { alert("Add a Songs block with songs first — the recording plays over its first song."); return; }
   drawOver();
 });
+// Tap the song's name and the phone reads it out (big words for a small DJ).
+function sayOverSong() {
+  const t = overTrack();
+  if (!t || recorder.recording || micStarting || !("speechSynthesis" in window)) return;
+  speechSynthesis.cancel();
+  const u = new SpeechSynthesisUtterance(`${t.name}, by ${t.artist}`);
+  u.lang = "en-GB";
+  u.rate = 0.9;
+  speechSynthesis.speak(u);
+}
+recOverSong.addEventListener("click", sayOverSong);
+
 // Hear the song's opening on the phone while he thinks about what to say.
 async function stopListening() {
   if (listenTimer !== null) { clearTimeout(listenTimer); listenTimer = null; }
@@ -456,6 +468,7 @@ recMain.addEventListener("click", async () => {
   }
   if (recorderModal.classList.contains("hidden")) { void recorder.stop(); return; } // closed while waiting
   void stopListening();
+  if ("speechSynthesis" in window) speechSynthesis.cancel(); // not into the take
   recMusicUsed = recMusicOn;
   recMusicBtn.disabled = true;
   recOverBtn.disabled = true;
@@ -518,6 +531,7 @@ function cancelRecording() {
   if (recorder.recording) { void recorder.stop(); if (!current?.running) releaseWakeLock(); }
   setRecordMusic(false);
   void stopListening();
+  if ("speechSynthesis" in window) speechSynthesis.cancel();
   recPreview.pause();
 }
 recRetry.addEventListener("click", resetRecorderUI);
