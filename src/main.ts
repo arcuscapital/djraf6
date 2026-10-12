@@ -1,5 +1,5 @@
 import "./style.css";
-import { Recorder, preloadMusic, unlockAudio } from "./audio";
+import { Recorder, preloadMusic, resumeAll, unlockAudio } from "./audio";
 import { handleRedirect, isLoggedIn, login } from "./auth";
 import { celebrateShowEnd, closeCelebration, MEDAL_COLOR, onAirSecond, previewCelebration, saveNow, showStarted } from "./celebrate";
 import { makeReorderable } from "./listDrag";
@@ -392,6 +392,7 @@ recMain.addEventListener("click", async () => {
   if (recorderModal.classList.contains("hidden")) { void recorder.stop(); return; } // closed while waiting
   recMusicUsed = recMusicOn;
   recMusicBtn.disabled = true;
+  void keepAwake(); // a dark screen can mute the mic part-way through a take
   recSeconds = 0;
   recTimer.textContent = "0:00";
   show(recTimer, true);
@@ -404,6 +405,7 @@ recMain.addEventListener("click", async () => {
 
 async function finishRecording() {
   if (recInterval !== null) { clearInterval(recInterval); recInterval = null; }
+  if (!current?.running) releaseWakeLock();
   const blob = await recorder.stop();
   setRecordMusic(false);
   show(recMusicBtn, false);
@@ -435,7 +437,7 @@ async function keepTake() {
 }
 function cancelRecording() {
   if (recInterval !== null) { clearInterval(recInterval); recInterval = null; }
-  if (recorder.recording) void recorder.stop();
+  if (recorder.recording) { void recorder.stop(); if (!current?.running) releaseWakeLock(); }
   setRecordMusic(false);
   recPreview.pause();
 }
@@ -808,7 +810,17 @@ function renderTimetable(currentIndex: number) {
   (el.children[currentIndex] as HTMLElement | undefined)?.scrollIntoView({ behavior: "smooth", inline: "start", block: "nearest" });
 }
 
+// The screen stays on while a show plays or a take is recording. The phone
+// drops the wake lock whenever the app goes out of view (e.g. a hop into
+// Spotify), so it's taken again when the app comes back — otherwise the screen
+// could time out mid-show and the phone would mute the app's sound (and the
+// mic) until he touched it again: the "goes quiet for 20 seconds" problem.
 let wakeLock: { release(): Promise<void> } | null = null;
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState !== "visible") return;
+  if (current?.running || recorder.recording) void keepAwake();
+  if (current?.running && !current.paused) void resumeAll(); // the sound engine, if the phone paused it
+});
 async function keepAwake() {
   try { wakeLock = await (navigator as unknown as { wakeLock: { request(t: string): Promise<{ release(): Promise<void> }> } }).wakeLock.request("screen"); } catch { /* not supported */ }
 }
