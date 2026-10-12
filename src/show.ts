@@ -287,8 +287,16 @@ export class Show {
       songStarted = true;
       const ok = await clip.play(blob, voiceDone);
       if (!ok) voiceDone();
+      // Watchdog: if something takes playback away from the browser player
+      // (Spotify poked on another device, the player dropped), the song won't
+      // end by itself — after 6 s of that, move on rather than wait forever.
+      let lost = 0;
       const follow = (s: Awaited<ReturnType<typeof wp.getState>>) => {
-        if (!s || over) return;
+        if (over) return;
+        const stalled = !s || (s.paused && !this.paused && s.position > 0);
+        lost = stalled ? lost + 1 : 0;
+        if (sawPlaying && lost >= 6) { finishAll(); return; }
+        if (!s) return;
         const cur = s.track_window.current_track?.uri;
         if (cur === track.uri && !s.paused) sawPlaying = true;
         if (cur === track.uri) this.ui.progress(s.position / 1000, s.duration / 1000);
