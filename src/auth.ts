@@ -1,7 +1,8 @@
 // Spotify login with PKCE — works on a static site, no server or secret needed.
 // Same Spotify app (client id) as the original Krom FM; this address is added
-// to its Redirect URIs. The login is shared with v2 (/djraf/, same site, same
-// storage keys), so a phone already connected there is connected here too.
+// to its Redirect URIs. This version asks for more permissions than the earlier
+// ones (writing a private playlist to keep his records, and playing a song in
+// the browser), so it keeps its own login rather than sharing theirs.
 
 export const CLIENT_ID = "6ec3c6f59ec14dcca495a904a268a67f";
 export const REDIRECT_URI = window.location.origin + import.meta.env.BASE_URL;
@@ -10,14 +11,18 @@ const SCOPES = [
   "user-modify-playback-state",
   "user-read-currently-playing",
   "playlist-read-private",
-  "playlist-read-collaborative"
+  "playlist-read-collaborative",
+  "playlist-modify-private", // the "Krom FM data" playlist that holds his records
+  "streaming", // playing a song in the browser (record over the next song)
+  "user-read-email",
+  "user-read-private"
 ].join(" ");
 
 const K = {
-  token: "djraf_access_token",
-  expires: "djraf_token_expires_at",
-  refresh: "djraf_refresh_token",
-  verifier: "djraf_code_verifier"
+  token: "djraf6_access_token",
+  expires: "djraf6_token_expires_at",
+  refresh: "djraf6_refresh_token",
+  verifier: "djraf6_code_verifier"
 };
 
 function randomString(len: number): string {

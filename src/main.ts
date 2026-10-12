@@ -1,7 +1,8 @@
 import "./style.css";
 import { Recorder, preloadMusic, resumeAll, unlockAudio } from "./audio";
 import { handleRedirect, isLoggedIn, login } from "./auth";
-import { celebrateShowEnd, closeCelebration, MEDAL_COLOR, onAirSecond, previewCelebration, saveNow, showStarted } from "./celebrate";
+import { celebrateShowEnd, closeCelebration, MEDAL_COLOR, onAirSecond, previewCelebration, saveNow, showStarted, sync } from "./celebrate";
+import * as wp from "./webPlayer";
 import { makeReorderable } from "./listDrag";
 import { Show, TYPE_LABELS } from "./show";
 import { assignSongs, autoSongsUsed, rebuildPool } from "./songs";
@@ -9,6 +10,7 @@ import { fromNowPlaying } from "./songSource";
 import * as sp from "./spotify";
 import * as store from "./storage";
 import type { Block, BlockType, SongSource, Track } from "./types";
+import type { Medal } from "./trophies";
 import { BUILD_ID, watchForUpdates } from "./update";
 
 const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
@@ -46,7 +48,7 @@ const pickModal = $("pick-modal");
 const orderModal = $("order-modal");
 const allModals = [addModal, modeModal, recorderModal, songsModal, pickModal, orderModal];
 
-const VERSION_TAG = "v6 · " + BUILD_ID;
+const VERSION_TAG = "v7 · " + BUILD_ID;
 $("app-version-tag").textContent = VERSION_TAG;
 
 // ====================== BLOCK LIST ======================
@@ -63,7 +65,7 @@ function renderBlocks() {
       left = `<span class="block-icon">🎵</span><span class="block-text">Play <span class="song-count">${block.count}</span> ${block.count === 1 ? "Song" : "Songs"}<span class="song-names">${names ? escapeHtml(names) : "Push the red button ↑"}</span></span>`;
       right = `<button class="num-btn" data-action="minus">−</button><button class="num-btn" data-action="plus">+</button><button class="delete-btn" data-action="delete">×</button>`;
     } else {
-      const mode = (block.mode === "record" ? MODE_LABELS.record : MODE_LABELS.talk) + (block.mode === "record" && block.music ? " + 🎶" : "");
+      const mode = (block.mode === "record" ? MODE_LABELS.record : MODE_LABELS.talk) + (block.mode === "record" && block.music ? " + 🎶" : "") + (block.mode === "record" && block.over ? " over next song" : "");
       left = `<span class="block-icon">${TYPE_ICONS[block.type]}</span><span class="block-text">${TYPE_LABELS[block.type]} <span class="block-mode-badge">${mode}</span></span>`;
       right = `<button class="edit-btn" data-action="edit">✎</button><button class="delete-btn" data-action="delete">×</button>`;
     }
@@ -343,6 +345,69 @@ function setRecordMusic(on: boolean) {
   recMusicOn = on;
   drawMusicButton(recMusicBtn, on);
 }
+
+// The third option: his recording plays over the start of a song, which then
+// carries on. He picks which Songs block it goes before, so he knows what he's
+// talking over; the block is placed just before it. 30 seconds at most.
+const OVER_LIMIT_S = 30;
+const recOverBtn = $<HTMLButtonElement>("recorder-over-btn");
+const recOverSong = $("recorder-over-song");
+const recListenBtn = $<HTMLButtonElement>("recorder-listen-btn");
+let recOverBlockId: string | null = null;
+let listening = false;
+let listenTimer: number | null = null;
+function overTrack(): Track | null {
+  return recOverBlockId ? computeTracks().get(recOverBlockId)?.[0] ?? null : null;
+}
+function drawOver() {
+  const t = overTrack();
+  if (recOverBlockId && !t) recOverBlockId = null;
+  const on = !!recOverBlockId;
+  recOverBtn.classList.toggle("on", on);
+  recOverBtn.textContent = on ? "🎤 Over the next song: ON" : "🎤 Over the next song: OFF";
+  show(recOverSong, on);
+  recOverSong.textContent = t ? `You're talking over: ${t.name} – ${t.artist}` : "";
+  show(recListenBtn, on);
+  if (on) { setRecordMusic(false); recMusicBtn.disabled = true; }
+  else if (!recorder.recording) recMusicBtn.disabled = false;
+}
+function pickOverSong() {
+  const tracks = computeTracks();
+  const rows: PickRow[] = [];
+  let n = 0;
+  for (const b of blocks) {
+    if (b.type !== "songs" || b === target) continue;
+    n++;
+    const t = tracks.get(b.id)?.[0];
+    if (!t) continue;
+    rows.push({ title: t.name, sub: `${t.artist} · first song of Songs block ${n}`, onPick: () => { recOverBlockId = b.id; drawOver(); openModal(recorderModal); } });
+  }
+  if (!rows.length) { alert("Add a Songs block with songs first — the recording plays over its first song."); return; }
+  openPicker("Which song will you talk over?", rows, () => openModal(recorderModal));
+}
+recOverBtn.addEventListener("click", () => {
+  if (recorder.recording || micStarting) return;
+  if (recOverBlockId) { recOverBlockId = null; drawOver(); } else pickOverSong();
+});
+// Hear the song's opening on the phone while he thinks about what to say.
+async function stopListening() {
+  if (listenTimer !== null) { clearTimeout(listenTimer); listenTimer = null; }
+  if (!listening) return;
+  listening = false;
+  recListenBtn.textContent = "▶ Listen to the start";
+  if (deviceId) await sp.pauseVerified(deviceId);
+}
+recListenBtn.addEventListener("click", async () => {
+  if (listening) { void stopListening(); return; }
+  const t = overTrack();
+  if (!t) return;
+  if (!deviceId && !(await ensureDevice())) { alert("Open the Spotify app on this phone, then try again."); return; }
+  listening = true;
+  recListenBtn.textContent = "⏹ Stop";
+  await sp.setRepeat(deviceId!, "off");
+  await sp.playUris(deviceId!, [t.uri]);
+  listenTimer = window.setTimeout(() => void stopListening(), 20000);
+});
 // The choice is made before he presses record (the button is locked while
 // recording), so a take is either with music or without — never half and half.
 recMusicBtn.addEventListener("click", () => { if (!recorder.recording && !micStarting) setRecordMusic(!recMusicOn); });
@@ -353,6 +418,10 @@ function resetRecorderUI() {
   setRecordMusic(false);
   recMusicBtn.disabled = false;
   show(recMusicBtn, true);
+  recOverBlockId = null;
+  void stopListening();
+  drawOver();
+  show(recOverBtn, true);
   show(recTimer, false);
   recTimer.textContent = "0:00";
   show(recPreview, false);
@@ -365,7 +434,7 @@ function resetRecorderUI() {
 }
 function openRecorder() {
   resetRecorderUI();
-  $("recorder-hint").textContent = "Want music under it? Tap 🎶 Background music first — you won't hear it while you record; it plays under your voice on air. Then tap the button, say your bit, and tap stop.";
+  $("recorder-hint").textContent = "Pick one first: 🎶 Background music plays under your voice on air (you won't hear it while recording), or 🎤 Over the next song puts your voice over the start of a song. Then tap the button, say your bit, and tap stop.";
   openModal(recorderModal);
 }
 const fmt = (s: number) => `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
@@ -390,8 +459,10 @@ recMain.addEventListener("click", async () => {
     micStarting = false;
   }
   if (recorderModal.classList.contains("hidden")) { void recorder.stop(); return; } // closed while waiting
+  void stopListening();
   recMusicUsed = recMusicOn;
   recMusicBtn.disabled = true;
+  recOverBtn.disabled = true;
   void keepAwake(); // a dark screen can mute the mic part-way through a take
   recSeconds = 0;
   recTimer.textContent = "0:00";
@@ -399,7 +470,8 @@ recMain.addEventListener("click", async () => {
   recMain.textContent = "⏹ Stop Recording";
   recInterval = window.setInterval(() => {
     recSeconds++;
-    recTimer.textContent = fmt(recSeconds);
+    recTimer.textContent = recOverBlockId ? `${fmt(recSeconds)} / ${fmt(OVER_LIMIT_S)}` : fmt(recSeconds);
+    if (recOverBlockId && recSeconds >= OVER_LIMIT_S) void finishRecording(); // over a song: 30 s at most
   }, 1000);
 });
 
@@ -409,6 +481,9 @@ async function finishRecording() {
   const blob = await recorder.stop();
   setRecordMusic(false);
   show(recMusicBtn, false);
+  show(recOverBtn, false);
+  show(recListenBtn, false);
+  recOverBtn.disabled = false;
   if (!blob) return;
   recBlob = blob;
   recPreview.src = URL.createObjectURL(blob);
@@ -428,8 +503,15 @@ async function keepTake() {
   recBlob = null;
   await store.saveRecording(target.id, blob);
   target.mode = "record";
-  target.music = recMusicUsed || undefined;
-  if (targetIsNew) blocks.push(target);
+  target.over = recOverBlockId ? true : undefined;
+  target.music = recOverBlockId ? undefined : recMusicUsed || undefined;
+  const at = recOverBlockId ? blocks.findIndex(b => b.id === recOverBlockId) : -1;
+  if (at >= 0) {
+    // Goes just before the Songs block he picked (moving it there if it already exists).
+    const was = blocks.indexOf(target);
+    if (was >= 0) blocks.splice(was, 1);
+    blocks.splice(blocks.findIndex(b => b.id === recOverBlockId), 0, target);
+  } else if (targetIsNew) blocks.push(target);
   targetIsNew = false;
   invalidateResume();
   save();
@@ -439,6 +521,7 @@ function cancelRecording() {
   if (recInterval !== null) { clearInterval(recInterval); recInterval = null; }
   if (recorder.recording) { void recorder.stop(); if (!current?.running) releaseWakeLock(); }
   setRecordMusic(false);
+  void stopListening();
   recPreview.pause();
 }
 recRetry.addEventListener("click", resetRecorderUI);
@@ -657,6 +740,7 @@ async function ensureDevice(): Promise<boolean> {
     showNeedsDevice("Couldn't reach Spotify — check the internet, then tap Refresh.");
     return false;
   }
+  devices = devices.filter(x => x.name !== wp.PLAYER_NAME); // our own browser player isn't the phone
   const d = devices.find(x => x.is_active) ?? devices.find(x => x.type === "Smartphone") ?? devices[0];
   if (!d) { deviceId = null; showNeedsDevice(); return false; }
   deviceId = d.id;
@@ -829,6 +913,7 @@ function releaseWakeLock() { void wakeLock?.release().catch(() => {}); wakeLock 
 async function startShow(from: number, tracks: Map<string, Track[]>) {
   if (!blocks.length) { alert("Add at least one block!"); return; }
   await unlockAudio();
+  if (blocks.some(b => b.mode === "record" && b.over)) void wp.prepare();
   current?.stop();
   showStarted();
   current = new Show(blocks, tracks, deviceId, ui, () => {
@@ -887,7 +972,7 @@ function finishShow() {
   show(liveScreen, false);
   show(endScreen, true);
   updateStartLabel();
-  celebrateShowEnd();
+  void celebrateShowEnd();
 }
 
 function invalidateResume() { resumeFrom = null; resumeTracks = null; updateStartLabel(); }
@@ -901,6 +986,7 @@ function updateStartLabel() {
 function exitToBuilderInternal() {
   closeCelebration(true);
   saveNow(); // minutes on air so far are kept even if the show stops early
+  void sync().then(popMedals);
   if (current?.running) {
     resumeFrom = current.index;
     resumeTracks = computeTracks();
@@ -1003,6 +1089,7 @@ async function init() {
   await handleRedirect();
   if (isLoggedIn()) await ensureDevice();
   else showLoggedOut();
+  void sync().then(popMedals); // his totals from the other phones
 }
 
 // ====================== TIME ON AIR → RECORDS ======================
@@ -1012,20 +1099,25 @@ async function init() {
 // countdown anywhere: the record just arrives.
 const starPop = $("star-pop");
 let starPopTimer: number | null = null;
+function popMedal(m: Medal) {
+  if (!current?.running) return;
+  $("star-pop-text").textContent = `You earned a ${m} record!`;
+  $("star-pop-icon").style.color = MEDAL_COLOR[m];
+  show(starPop, true);
+  starPop.classList.remove("star-pop-go");
+  void starPop.offsetWidth; // restart the pop animation
+  starPop.classList.add("star-pop-go");
+  navigator.vibrate?.([30, 40, 30]);
+  if (starPopTimer !== null) clearTimeout(starPopTimer);
+  starPopTimer = window.setTimeout(() => show(starPop, false), 3500);
+}
+function popMedals(ms: Medal[]) { for (const m of ms) popMedal(m); }
+let onAirTicks = 0;
 window.setInterval(() => {
   if (!current?.running || current.paused) return;
   const earned = onAirSecond();
-  if (earned) {
-    $("star-pop-text").textContent = `You earned a ${earned} record!`;
-    $("star-pop-icon").style.color = MEDAL_COLOR[earned];
-    show(starPop, true);
-    starPop.classList.remove("star-pop-go");
-    void starPop.offsetWidth; // restart the pop animation
-    starPop.classList.add("star-pop-go");
-    navigator.vibrate?.([30, 40, 30]);
-    if (starPopTimer !== null) clearTimeout(starPopTimer);
-    starPopTimer = window.setTimeout(() => show(starPop, false), 3500);
-  }
+  if (earned) popMedal(earned);
+  if (++onAirTicks % 60 === 0) void sync().then(popMedals); // keep the shared total up to date
 }, 1000);
 
 // ?demo=party / bronze / silver / gold shows the end-of-show celebration straight away.

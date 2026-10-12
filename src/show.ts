@@ -3,6 +3,7 @@ import { SongRun } from "./songRun";
 import * as sp from "./spotify";
 import { loadRecording } from "./storage";
 import type { Block, Track } from "./types";
+import * as wp from "./webPlayer";
 
 export const TYPE_LABELS: Record<Block["type"], string> = {
   songs: "Songs",
@@ -50,6 +51,7 @@ export class Show {
   private songRun: SongRun | null = null;
   private songList: Track[] = [];
   private songIdx = -1;
+  private skipFirstOf: string | null = null; // a songs block whose first song was played under a recording
 
   constructor(
     private blocks: Block[],
@@ -91,7 +93,9 @@ export class Show {
     const b = this.blocks[i];
     this.ui.music(null);
     if (b.type !== "songs") this.ui.songList(null, -1);
+    const over = b.mode === "record" && b.over ? this.overTarget(i) : null;
     if (b.type === "songs") this.seg = this.songs(b, next);
+    else if (over) this.seg = this.overSong(b, over, next, token);
     else if (b.mode === "record") this.seg = this.clip(b, next, token);
     else this.seg = this.talk(b, next); // "talk" (and anything older)
     if (this.paused) void this.seg?.pause();
@@ -99,7 +103,11 @@ export class Show {
 
   // ---------- songs: exact track list handed to Spotify ----------
   private songs(b: Block, next: () => void): Segment | null {
-    const list = this.tracks.get(b.id) ?? [];
+    const full = this.tracks.get(b.id) ?? [];
+    const skip = this.skipFirstOf === b.id;
+    this.skipFirstOf = null;
+    const list = skip ? full.slice(1) : full;
+    if (skip && !list.length) { const t = setTimeout(next, 100); return { pause() {}, resume() {}, stop: () => clearTimeout(t) }; }
     if (!list.length || !this.deviceId) {
       this.ui.status("Songs", "No songs to play", "Skipping…");
       const t = setTimeout(next, 1500);
@@ -205,6 +213,97 @@ export class Show {
       resume: () => resumeAll(),
       stop: () => { over = true; if (progressTimer !== null) clearInterval(progressTimer); clip.stop(); music?.stop(600); },
       done: finish
+    };
+  }
+
+  // ---------- his recording over the start of the next song ----------
+  // The next songs block's first song plays in the browser (webPlayer.ts),
+  // turned down under his voice; when his voice ends the song comes up and
+  // carries on to its end without a break. The songs block after it then
+  // starts from its second song. If the browser can't play Spotify, it's a
+  // plain recording and the songs block plays as normal.
+  private overTarget(i: number): { block: Block; track: Track } | null {
+    for (let j = i + 1; j < this.blocks.length; j++) {
+      const nb = this.blocks[j];
+      if (nb.type !== "songs") continue;
+      const t = this.tracks.get(nb.id)?.[0];
+      return t ? { block: nb, track: t } : null;
+    }
+    return null;
+  }
+
+  private overSong(b: Block, target: { block: Block; track: Track }, next: () => void, token: number): Segment {
+    const label = TYPE_LABELS[b.type];
+    const { track } = target;
+    const clip = new ClipPlayer();
+    const DUCK = 0.25;
+    let over = false;
+    let songStarted = false;
+    let sawPlaying = false;
+    let unsub: (() => void) | null = null;
+    let poll: number | null = null;
+    const finishAll = () => {
+      if (over) return;
+      over = true;
+      if (poll !== null) clearInterval(poll);
+      unsub?.();
+      clip.stop();
+      if (songStarted) void wp.pause();
+      next();
+    };
+    // His voice has finished: the song comes up and carries on.
+    const voiceDone = () => {
+      if (over || !songStarted) return;
+      this.ui.buttons("songs");
+      this.ui.status("Now Playing", track.name, track.artist);
+      void wp.ramp(DUCK, 1, 1500);
+    };
+    const plain = async (blob: Blob | null) => {
+      if (!blob) { this.ui.status(label, "🤫 ...", "(no recording found)"); setTimeout(finishAll, 2500); return; }
+      this.ui.status(label, "▶ Playing recording...", "Listen up!");
+      const ok = await clip.play(blob, finishAll);
+      if (!ok) setTimeout(finishAll, 1500);
+    };
+    this.ui.buttons("clip");
+    this.ui.status(label, `🎤 Over: ${track.name}`, `${track.artist} — your voice first, then the song`);
+    this.ui.progress(0, null);
+    this.ui.songList([track], 0);
+    void (async () => {
+      const blob = await loadRecording(b.id).catch(() => null);
+      if (token !== this.token || over) return;
+      const dev = blob ? await wp.prepare() : null;
+      if (token !== this.token || over) return;
+      if (!dev || !blob) return plain(blob);
+      await wp.setVolume(DUCK);
+      if (!(await sp.playUris(dev, [track.uri]))) return plain(blob);
+      this.skipFirstOf = target.block.id;
+      // Give it a moment to actually start, so his voice lands on the music.
+      for (let i = 0; i < 20; i++) {
+        const s = await wp.getState();
+        if (s && !s.paused && s.track_window.current_track?.uri === track.uri) break;
+        await sp.sleep(300);
+      }
+      if (token !== this.token || over) return;
+      songStarted = true;
+      const ok = await clip.play(blob, voiceDone);
+      if (!ok) voiceDone();
+      const follow = (s: Awaited<ReturnType<typeof wp.getState>>) => {
+        if (!s || over) return;
+        const cur = s.track_window.current_track?.uri;
+        if (cur === track.uri && !s.paused) sawPlaying = true;
+        if (cur === track.uri) this.ui.progress(s.position / 1000, s.duration / 1000);
+        // At the end Spotify sits paused at 0 (or moves on): the song is over.
+        if (sawPlaying && ((s.paused && s.position === 0) || cur !== track.uri)) finishAll();
+      };
+      unsub = wp.onState(follow);
+      poll = window.setInterval(() => { void wp.getState().then(follow); }, 1000);
+    })();
+    return {
+      pause: async () => { await pauseAll(); if (songStarted) await wp.pause(); },
+      resume: async () => { await resumeAll(); if (songStarted) await wp.resume(); },
+      stop: () => { over = true; if (poll !== null) clearInterval(poll); unsub?.(); clip.stop(); if (songStarted) void wp.pause(); },
+      done: () => { clip.stop(); if (songStarted) voiceDone(); else finishAll(); }, // "Skip recording": the song carries on
+      skip: () => finishAll() // "Skip this song"
     };
   }
 

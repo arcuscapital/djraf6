@@ -3,11 +3,11 @@ import type { Block, SongSource } from "./types";
 
 // This app shares a web address (arcuscapital.github.io) with the original
 // Krom FM and with /djraf/ … /djraf4/, so browser storage is shared too. The show,
-// playlist and recordings use their own "djraf5" names so the apps can be
+// playlist and recordings use their own "djraf6" names so the apps can be
 // compared side by side without touching each other. (The Spotify login is
 // deliberately shared with /djraf/ — see auth.ts.)
 
-const KEYS = { blocks: "djraf5_blocks", source: "djraf5_source", loop: "djraf5_loop" };
+const KEYS = { blocks: "djraf6_blocks", source: "djraf6_source", loop: "djraf6_loop" };
 
 export function defaultBlocks(): Block[] {
   return [
@@ -44,15 +44,20 @@ export const saveLoop = (v: boolean) => write(KEYS.loop, v);
 // Records won (time on air). Older saves are carried across: this version's
 // first rule counted stars and gold records; /djraf4/ counted gold records.
 export function loadTrophies(): Trophies {
-  const mine = read<(Partial<Trophies> & { golds?: number }) | null>("djraf5_trophies", null);
-  if (mine) return normalize({ ...mine, gold: mine.gold ?? mine.golds });
+  const mine = read<Partial<Trophies> | null>("djraf6_trophies", null);
+  if (mine) return normalize(mine);
+  const v6 = read<(Partial<Trophies> & { golds?: number }) | null>("djraf5_trophies", null);
+  if (v6) return normalize({ ...v6, gold: v6.gold ?? v6.golds });
   const older = read<{ golds?: number } | null>("djraf4_trophies", null);
   return normalize({ gold: older?.golds ?? 0 });
 }
-export const saveTrophies = (t: Trophies) => write("djraf5_trophies", t);
+export const saveTrophies = (t: Trophies) => write("djraf6_trophies", t);
+// Seconds on air this phone hasn't yet added to the totals in his Spotify account.
+export const loadPending = () => Math.max(0, Math.floor(read<number>("djraf6_pending", 0)) || 0);
+export const savePending = (s: number) => write("djraf6_pending", s);
 
 // ---------- recordings (IndexedDB) ----------
-const DB = "djraf5-db";
+const DB = "djraf6-db";
 const STORE = "recordings";
 let dbp: Promise<IDBDatabase> | null = null;
 

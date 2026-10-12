@@ -172,3 +172,20 @@ export const transfer =(deviceId: string) => command(`/me/player`, "PUT", { devi
 // songs mid-show and the song that's playing carries on where it was).
 export const playUris = (deviceId: string, uris: string[], at = 0, positionMs = 0) =>
   command(`/me/player/play?device_id=${deviceId}`, "PUT", at ? { uris, offset: { position: at }, position_ms: positionMs } : { uris, position_ms: positionMs });
+
+// ---------- the "Krom FM data" playlist (his records live in its description) ----------
+export async function getMe(): Promise<{ id: string } | null> {
+  return json<{ id: string }>("/me");
+}
+export async function getPlaylistDescription(id: string): Promise<string | null> {
+  const d = await json<{ description: string | null }>(`/playlists/${id}?fields=description`);
+  return d?.description ?? "";
+}
+export async function createPrivatePlaylist(userId: string, name: string, description: string): Promise<string | null> {
+  const res = await call(`/users/${encodeURIComponent(userId)}/playlists`, { method: "POST", body: JSON.stringify({ name, public: false, description }) });
+  if (!res.ok) return null;
+  const d = (await res.json()) as { id?: string };
+  return d.id ?? null;
+}
+export const setPlaylistDescription = (id: string, description: string) => command(`/playlists/${id}`, "PUT", { description });
+

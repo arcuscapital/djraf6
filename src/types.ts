@@ -20,6 +20,7 @@ export interface Block {
   // everything else
   mode?: Mode;
   music?: boolean; // record mode: he had the background music on while recording, so it plays under it on air
+  over?: boolean; // record mode: plays over the start of the next song (which then carries on in the foreground)
 }
 
 export interface SongSource {

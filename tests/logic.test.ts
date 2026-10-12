@@ -3,6 +3,7 @@ import { assignSongs, autoSongsUsed } from "../src/songs";
 import { judgeRun, newRunState, type Snapshot } from "../src/runWatch";
 import { findCurrent, rebuildPool, startingAt } from "../src/songs";
 import { measure, playbackGain } from "../src/loudness";
+import { formatDescription, parseDescription } from "../src/cloudFormat";
 import { addOnAir, better, finishShow, nextRecord, normalize, toNext, type Trophies } from "../src/trophies";
 import type { Block, Track } from "../src/types";
 
@@ -241,6 +242,29 @@ describe("voice level on air", () => {
     expect(m.peak).toBeCloseTo(0.8, 5);
     expect(m.rms).toBeGreaterThan(0.29);
     expect(m.rms).toBeLessThan(0.32);
+  });
+});
+
+describe("records kept in his Spotify account (playlist description)", () => {
+  const t: Trophies = { onAir: 1234, bronze: 3, silver: 1, gold: 18 };
+  it("round-trips, and asks not to delete the playlist", () => {
+    const d = formatDescription(t);
+    expect(d).toContain("don't delete");
+    expect(d.length).toBeLessThan(300);
+    expect(parseDescription(d)).toEqual(t);
+  });
+  it("copes with Spotify's HTML escaping and with junk", () => {
+    expect(parseDescription("Krom FM keeps Raf&#x27;s records here. {&quot;onAir&quot;:60,&quot;bronze&quot;:1,&quot;silver&quot;:0,&quot;gold&quot;:2}")).toEqual({ onAir: 60, bronze: 1, silver: 0, gold: 2 });
+    expect(parseDescription("")).toBeNull();
+    expect(parseDescription(null)).toBeNull();
+    expect(parseDescription("someone typed over it")).toBeNull();
+    expect(parseDescription("{not json")).toBeNull();
+  });
+  it("merging another phone's time: the cloud total plus what this phone adds", () => {
+    const cloud: Trophies = { onAir: 1700, bronze: 0, silver: 0, gold: 0 };
+    const r = addOnAir(cloud, 200); // this phone had 200 s pending
+    expect(r.earned).toBe("bronze");
+    expect(r.trophies).toEqual({ onAir: 1900, bronze: 1, silver: 0, gold: 0 });
   });
 });
 
