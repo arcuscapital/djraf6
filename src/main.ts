@@ -347,8 +347,9 @@ function setRecordMusic(on: boolean) {
 }
 
 // The third option: his recording plays over the start of a song, which then
-// carries on. He picks which Songs block it goes before, so he knows what he's
-// talking over; the block is placed just before it. 30 seconds at most.
+// carries on. One tap: the song is the first one of the next Songs block (for a
+// new block, the show's first Songs block), named under the button; the block
+// is placed just before that Songs block when the take is kept. 30 s at most.
 const OVER_LIMIT_S = 30;
 const recOverBtn = $<HTMLButtonElement>("recorder-over-btn");
 const recOverSong = $("recorder-over-song");
@@ -371,23 +372,18 @@ function drawOver() {
   if (on) { setRecordMusic(false); recMusicBtn.disabled = true; }
   else if (!recorder.recording) recMusicBtn.disabled = false;
 }
-function pickOverSong() {
+function nextSongsBlock(): string | null {
   const tracks = computeTracks();
-  const rows: PickRow[] = [];
-  let n = 0;
-  for (const b of blocks) {
-    if (b.type !== "songs" || b === target) continue;
-    n++;
-    const t = tracks.get(b.id)?.[0];
-    if (!t) continue;
-    rows.push({ title: t.name, sub: `${t.artist} · first song of Songs block ${n}`, onPick: () => { recOverBlockId = b.id; drawOver(); openModal(recorderModal); } });
-  }
-  if (!rows.length) { alert("Add a Songs block with songs first — the recording plays over its first song."); return; }
-  openPicker("Which song will you talk over?", rows, () => openModal(recorderModal));
+  const has = (b: Block) => b.type === "songs" && !!tracks.get(b.id)?.length;
+  const pos = target ? blocks.indexOf(target) : -1;
+  return (blocks.find((b, i) => i > pos && has(b)) ?? blocks.find(has))?.id ?? null;
 }
 recOverBtn.addEventListener("click", () => {
   if (recorder.recording || micStarting) return;
-  if (recOverBlockId) { recOverBlockId = null; drawOver(); } else pickOverSong();
+  if (recOverBlockId) { recOverBlockId = null; drawOver(); return; }
+  recOverBlockId = nextSongsBlock();
+  if (!recOverBlockId) { alert("Add a Songs block with songs first — the recording plays over its first song."); return; }
+  drawOver();
 });
 // Hear the song's opening on the phone while he thinks about what to say.
 async function stopListening() {
