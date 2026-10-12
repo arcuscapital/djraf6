@@ -301,7 +301,10 @@ export class Show {
         if (cur === track.uri && !s.paused) sawPlaying = true;
         if (cur === track.uri) this.ui.progress(s.position / 1000, s.duration / 1000);
         // At the end Spotify sits paused at 0 (or moves on): the song is over.
-        if (sawPlaying && ((s.paused && s.position === 0) || cur !== track.uri)) finishAll();
+        // Seen live: sometimes the end isn't signalled and the player's clock
+        // just runs on past the song's length — that counts as over too.
+        const pastEnd = cur === track.uri && s.duration > 0 && s.position >= s.duration - 250;
+        if (sawPlaying && ((s.paused && s.position === 0) || cur !== track.uri || pastEnd)) finishAll();
       };
       unsub = wp.onState(follow);
       poll = window.setInterval(() => { void wp.getState().then(follow); }, 1000);
