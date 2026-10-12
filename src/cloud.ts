@@ -15,11 +15,7 @@ async function findOrCreate(seed: Trophies): Promise<string | null> {
   const lists = await sp.getMyPlaylists();
   const found = lists.find(p => p.name === PLAYLIST_NAME);
   let id = found?.id ?? null;
-  if (!id) {
-    const me = await sp.getMe();
-    if (!me) return null;
-    id = await sp.createPrivatePlaylist(me.id, PLAYLIST_NAME, formatDescription(seed));
-  }
+  if (!id) id = await sp.createPrivatePlaylist(PLAYLIST_NAME, formatDescription(seed));
   if (id) { playlistId = id; localStorage.setItem(CACHE_KEY, id); }
   return id;
 }

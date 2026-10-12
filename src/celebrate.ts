@@ -56,7 +56,10 @@ export function sync(): Promise<Medal[]> {
     const before = trophies;
     const cloud = await cloudLoad(base); // a brand-new playlist starts from this phone's agreed totals
     if (!cloud) return [];
-    base = addOnAir(cloud, mine).trophies;
+    // A playlist that's still empty while this phone has records (from before
+    // this version): the phone's records become the starting total.
+    const empty = (t: Trophies) => t.onAir === 0 && t.bronze === 0 && t.silver === 0 && t.gold === 0;
+    base = addOnAir(empty(cloud) && !empty(base) ? base : cloud, mine).trophies;
     pending -= mine; // seconds that arrived while we waited stay pending
     trophies = addOnAir(base, pending).trophies;
     const extras = RECORDS.filter(m => trophies[m] > before[m]);
